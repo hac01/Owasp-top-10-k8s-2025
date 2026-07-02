@@ -1,4 +1,4 @@
-# NimbusMart CTF — the OWASP Kubernetes Top 10 (2025), hands-on
+# OWASP Kubernetes Top 10 (2025), hands-on
 
 A **capture-the-flag** built on the [OWASP Kubernetes Top 10 — 2025](https://owasp.org/www-project-kubernetes-top-ten/).
 You've been hired to red-team **NimbusMart**, a fictional e-commerce company whose
@@ -6,7 +6,8 @@ cluster grew faster than its security. Ten challenges, one per OWASP risk (plus 
 bonus) — exploit each weakness, **capture the flag**, then apply the fix and prove
 it with the checker.
 
-![NimbusMart CTF — landing page](docs/images/hero.png)
+<img width="1331" height="689" alt="Screenshot 2026-07-03 at 3 02 12 AM" src="https://github.com/user-attachments/assets/c95e6482-811a-4ed0-8757-6b6458358036" />
+
 
 The world bible (company, services, namespaces, flag scheme) lives in [`labs/NIMBUSMART.md`](labs/NIMBUSMART.md).
 
@@ -145,7 +146,8 @@ Useful `make` targets (`make help` shows all):
 Each challenge is a real weakness in NimbusMart's cluster — pick a target, exploit
 it, capture the flag, then patch it and prove the fix with the checker.
 
-![The 10 challenges — challenge grid in the web app](docs/images/challenges.png)
+<img width="1372" height="824" alt="Screenshot 2026-07-03 at 3 03 34 AM" src="https://github.com/user-attachments/assets/6fb80cf3-6353-426e-a2d1-af34413e7680" />
+
 
 | ID  | Risk | Lab folder |
 |-----|------|-----------|
