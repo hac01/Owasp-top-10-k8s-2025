@@ -1,0 +1,76 @@
+# K02 — Overly Permissive RBAC Configuration (HARDENED)
+# Same catalog-api pod + ServiceAccount, but least-privilege RBAC. The wildcard
+# cluster-wide ClusterRole/ClusterRoleBinding are gone. In their place is a
+# namespaced Role that grants only what the app actually needs: reading
+# ConfigMaps inside the `storefront` namespace. No wildcards and no cluster-wide
+# reach, so:
+#   - the SA can no longer read Secrets in nimbusmart-ops -> flag unreachable
+#   - the k02 automated check passes
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    owasp: k02
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    owasp: k02
+rules:
+  # The catalog-api only needs to read its own ConfigMaps in storefront.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    owasp: k02
+subjects:
+  - kind: ServiceAccount
+    name: catalog-api
+    namespace: storefront
+roleRef:
+  kind: Role
+  name: catalog-api
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-config
+  namespace: storefront
+  labels:
+    owasp: k02
+data:
+  greeting: "hello from a least-privilege catalog-api"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    app: catalog-api
+    owasp: k02
+spec:
+  serviceAccountName: catalog-api
+  containers:
+    - name: api
+      image: alpine/k8s:1.31.1
+      command: ["sh", "-c", "sleep infinity"]

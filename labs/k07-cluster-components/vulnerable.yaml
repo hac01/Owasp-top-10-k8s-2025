@@ -1,0 +1,62 @@
+# K07 — Misconfigured and Vulnerable Cluster Components (VULNERABLE)
+# NimbusMart's `platform/debug-shell`. This reproduces cluster-hygiene
+# misconfiguration at the namespace level — distinct from a single risky pod —
+# alongside the "outdated / vulnerable component" dimension of the same risk:
+#   - the namespace's `default` ServiceAccount auto-mounts an API token
+#     (automountServiceAccountToken is unset -> defaults to true), so this pod
+#     receives a live cluster credential it never asked for.
+#   - the pod uses that `default` ServiceAccount (no serviceAccountName), and the
+#     namespace's RoleBinding (see setup.yaml) lets `default` read Secrets.
+#   - the namespace has NO ResourceQuota and NO LimitRange, so this workload can
+#     request unbounded CPU/memory and starve the node (denial of service).
+#   - the annotations below record that the platform team pins this debug tool to
+#     a stale, unsupported image and has no patch cadence — the outdated/vulnerable
+#     half of K07 (the reference is called out in narrative + defense).
+#
+# The broader K07 story (anonymous kubelet/API-server auth, insecure ports,
+# unauthenticated etcd, EOL control-plane/kubelet versions, and unscanned images)
+# is documented as narrative in README.md — those flags/versions are not editable
+# at runtime in kind, but the CIS/kube-bench and Trivy checks are listed there.
+#
+# Capture the flag (exec in, use the auto-mounted default token to read the secret):
+#   kubectl exec -n platform debug-shell -- \
+#     kubectl get secret platform-config -n platform -o jsonpath='{.data.flag}' | base64 -d
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k07
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-shell
+  namespace: platform
+  labels:
+    app: debug-shell
+    owasp: k07
+  annotations:
+    # OUTDATED / VULNERABLE COMPONENT (narrative dimension of K07):
+    # this debug tool has never been on a patch cadence. It previously ran the
+    # long-EOL `bitnami/kubectl:1.30` (image now removed upstream) and the
+    # storefront it debugs still ships `nginx:1.14.0` (2018, EOL — CVE-2019-9511,
+    # CVE-2019-9513, CVE-2019-9516, and dozens more). No image scanning gates it.
+    # Fingerprint + triage these with `trivy image ...` and `kubectl version`.
+    nimbusmart.io/legacy-image: "nginx:1.14.0"
+    nimbusmart.io/patch-cadence: "none"
+spec:
+  # No serviceAccountName -> uses "default"; no automountServiceAccountToken
+  # override -> the default SA's token is projected into the pod at
+  # /var/run/secrets/kubernetes.io/serviceaccount/token.
+  containers:
+    - name: shell
+      # An alpine-based image that ships kubectl and can talk to the API server
+      # in-cluster using the auto-mounted token. `bitnami/kubectl:1.30` no longer
+      # exists on Docker Hub, so this uses alpine/k8s (has /bin/sh + kubectl on PATH).
+      image: alpine/k8s:1.31.1
+      command: ["sh", "-c", "sleep infinity"]
+      # No resources block, and no LimitRange in the namespace to supply one.

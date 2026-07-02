@@ -1,0 +1,91 @@
+# K08 — Cluster-to-Cloud Lateral Movement (HARDENED)
+# The same data-exporter, cut off from the node's cloud identity:
+#   - hostNetwork removed          -> no longer sits on the node network
+#   - AWS_EC2_METADATA_DISABLED    -> the SDK will not read IMDS at all
+#   - default-deny egress + an explicit block of the metadata CIDR
+#     (169.254.169.254/32)         -> the pod cannot reach IMDS even if it tried
+#   - real fix: give the workload its OWN scoped cloud identity via IRSA
+#     (EKS) / Workload Identity (GKE) / AAD Workload Identity (AKS) with a
+#     projected ServiceAccount token — never let pods inherit the node role.
+#
+# This makes the k08 checker PASS (no hostNetwork, no cloud-cred env) and closes
+# the flag path.
+#
+# CNI note: kind's default CNI (kindnet) does not enforce NetworkPolicy, so the
+# egress rule below is illustrative; the SDK-level block (AWS_EC2_METADATA_DISABLED)
+# is what actually stops the pivot on kind.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-exporter
+  namespace: platform
+  labels:
+    app: data-exporter
+    owasp: k08
+spec:
+  containers:
+    - name: exporter
+      image: ctf-aws-cli:latest
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-c"]
+      args:
+        - "exec sleep infinity"
+      env:
+        # The SDK will not touch the instance metadata service.
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: AWS_DEFAULT_REGION
+          value: "us-east-1"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10005
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: awshome
+          mountPath: /home/awsuser
+  volumes:
+    - name: tmp
+      emptyDir: {}
+    - name: awshome
+      emptyDir: {}
+---
+# Default-deny egress for the data-exporter, with an explicit block of the
+# link-local metadata range. (Requires a NetworkPolicy-enforcing CNI to bite.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-exporter-deny-metadata
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app: data-exporter
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS so the app still resolves names…
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # …and everything else EXCEPT the cloud metadata link-local range.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32

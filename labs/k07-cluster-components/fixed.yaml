@@ -1,0 +1,83 @@
+# K07 — Misconfigured and Vulnerable Cluster Components (HARDENED)
+# Same `platform` namespace, cluster hygiene restored. This satisfies the k07
+# automated check and blocks the flag path:
+#   - the `default` ServiceAccount disables token auto-mount, so pods no longer
+#     receive a free cluster credential -> the exploit's token is never handed
+#     out and the platform-config secret is unreachable from the pod.
+#   - a ResourceQuota caps total CPU/memory the namespace can request.
+#   - a LimitRange gives every container a sane default request/limit.
+#   - the workload also opts out of token mounting at the pod level, sets
+#     explicit resource requests/limits, and pins a current, supported image
+#     (patch cadence + image scanning close the outdated-component gap).
+#
+# The flag is intentionally NOT present in this manifest.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k07
+---
+# Patch the namespace's default ServiceAccount so pods no longer get a free token.
+# NOTE: the control plane auto-creates this SA when the namespace is created, so
+# on a brand-new namespace the first `kubectl apply` can race and report
+# "serviceaccounts default already exists". Simply run `kubectl apply -f` again
+# (apply is idempotent) — the second pass patches automountServiceAccountToken.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: default
+  namespace: platform
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-quota
+  namespace: platform
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: platform-limits
+  namespace: platform
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 64Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-shell
+  namespace: platform
+  labels:
+    app: debug-shell
+    owasp: k07
+spec:
+  # Belt-and-braces: opt out of the token at the pod level too.
+  automountServiceAccountToken: false
+  containers:
+    - name: shell
+      # Current, supported release — kept on a patch cadence and image-scanned.
+      image: alpine/k8s:1.31.1
+      command: ["sh", "-c", "sleep infinity"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "32Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"

@@ -1,0 +1,58 @@
+# The in-browser terminal backend. Runs as the ctf-operator ServiceAccount, so
+# its in-pod kubectl drives THIS cluster with cluster-admin. Reachable at
+# localhost:30091 (the web app's xterm connects here over WebSocket).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terminal
+  namespace: nimbusmart-ctf
+  labels:
+    app: ctf-terminal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ctf-terminal
+  template:
+    metadata:
+      labels:
+        app: ctf-terminal
+    spec:
+      serviceAccountName: ctf-operator
+      automountServiceAccountToken: true
+      containers:
+        - name: terminal
+          image: nimbusmart-ctf-terminal:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 7681
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 7681
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "96Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: terminal
+  namespace: nimbusmart-ctf
+  labels:
+    app: ctf-terminal
+spec:
+  type: NodePort
+  selector:
+    app: ctf-terminal
+  ports:
+    - name: ws
+      port: 80
+      targetPort: 7681
+      nodePort: 30091

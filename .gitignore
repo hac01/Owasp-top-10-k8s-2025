@@ -1,0 +1,26 @@
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+npm-debug.log*
+
+# Go
+checker/owasp-k8s-checker
+checker/checker
+*.test
+
+# Build artifacts for the terminal image
+terminal-server/bin/
+terminal-server/node_modules/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Claude
+.claude/
+**/.claude/
+CLAUDE.md

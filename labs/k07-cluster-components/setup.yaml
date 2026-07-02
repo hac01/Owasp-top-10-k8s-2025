@@ -1,0 +1,63 @@
+# K07 setup — plants the target the exploit must reach.
+#
+# This seeds NimbusMart's `platform` namespace with:
+#   - a Secret `platform-config` holding an internal credential (the flag). In
+#     the real world this would be a CI token, a registry pull secret, or a
+#     database password used by platform tooling.
+#   - a Role + RoleBinding that lets the namespace's `default` ServiceAccount
+#     read Secrets. Ops added this "so the debug tooling can read its config",
+#     never realising every pod in the namespace runs as that default SA and
+#     silently receives its token.
+#
+# The flag is NOT in the debug-shell pod's own spec. It is only reachable by
+# using the auto-mounted default-SA token to call the API server and read the
+# Secret — which is exactly what the missing cluster hygiene (default-SA token
+# automount + no quotas/limits) enables.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k07
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-config
+  namespace: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+type: Opaque
+stringData:
+  # Internal platform tooling config. The "flag" is the CTF flag.
+  registry: registry.internal.nimbusmart.svc
+  flag: FLAG{misconfigured_stale_cluster_component}
+---
+# Role: read Secrets in the platform namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-config-reader
+  namespace: platform
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+# RoleBinding: grants that Role to the namespace's `default` ServiceAccount.
+# Because every pod that does not opt out runs as `default` AND gets its token
+# auto-mounted, this quietly hands secret-read to any container in the namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: default-sa-config-reader
+  namespace: platform
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: platform
+roleRef:
+  kind: Role
+  name: platform-config-reader
+  apiGroup: rbac.authorization.k8s.io

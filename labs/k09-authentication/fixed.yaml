@@ -1,0 +1,64 @@
+# K09 — Broken Authentication Mechanisms (HARDENED)
+# The same storefront/web-frontend workload, with a sound authentication
+# posture. This manifest satisfies the k09 automated check:
+#   - a dedicated service account (frontend-sa) that opts out of token mounting
+#   - automountServiceAccountToken: false on both the SA and the pod, so there
+#     is NO API credential written into the pod for an attacker to steal
+#   - the over-permissive secret-reader Role/RoleBinding is dropped (a front-end
+#     never reads Secrets)
+#   - the anonymous ClusterRole/ClusterRoleBinding is NOT recreated
+#
+# With no token in the pod and no anonymous binding, the K09 flag path is dead:
+# the session-signing-key Secret can no longer be reached from web-frontend.
+#
+# If this workload ever genuinely needed API access, it would opt in with a
+# projected, audience-bound, short-lived token — see the README / defense notes.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend-sa
+  namespace: storefront
+  labels:
+    owasp: k09
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+  namespace: storefront
+  labels:
+    app: web-frontend
+    owasp: k09
+spec:
+  serviceAccountName: frontend-sa
+  # Belt-and-suspenders: opt out at the pod level too. No token is mounted.
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: web
+      image: curlimages/curl:8.8.0
+      command: ["sh", "-c", "sleep infinity"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "32Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"

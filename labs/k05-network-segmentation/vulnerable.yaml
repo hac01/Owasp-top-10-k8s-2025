@@ -1,0 +1,80 @@
+# K05 — Missing Network Segmentation Controls (VULNERABLE)
+# NimbusMart runs a flat pod network with NO NetworkPolicy anywhere. Kubernetes'
+# default is "allow all": every pod can open a connection to every other pod and
+# service, in ANY namespace, plus the node metadata endpoint.
+#
+# Here the customer-facing `storefront/web-frontend` pod (your foothold) can talk
+# straight to `data/orders-db` — a datastore in a different namespace that should
+# only ever be reached by the intended order-processing clients.
+#
+# Capture the flag (cross-namespace, cross-tier, over a flat network):
+#   kubectl exec -n storefront web-frontend -- \
+#     curl -s http://orders-db.data.svc.cluster.local:5678
+#
+# DO NOT run internet-facing workloads on a flat network like this.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k05
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k05
+---
+# The orders database. It SERVES the flag over HTTP on 5678 to whoever can reach
+# it — and on a flat network, that is everyone.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: orders-db
+  namespace: data
+  labels:
+    app: orders-db
+    owasp: k05
+spec:
+  containers:
+    - name: db
+      image: hashicorp/http-echo:1.0
+      args:
+        - "-listen=:5678"
+        - "-text=FLAG{flat_network_reached_the_orders_db}"
+      ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-db
+  namespace: data
+  labels:
+    app: orders-db
+    owasp: k05
+spec:
+  selector:
+    app: orders-db
+  ports:
+    - port: 5678
+      targetPort: 5678
+---
+# Your foothold: the internet-facing storefront frontend. It has no business
+# reaching the orders database, but nothing stops it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+  namespace: storefront
+  labels:
+    app: web-frontend
+    owasp: k05
+spec:
+  containers:
+    - name: app
+      image: curlimages/curl:8.8.0
+      command: ["sh", "-c", "sleep infinity"]

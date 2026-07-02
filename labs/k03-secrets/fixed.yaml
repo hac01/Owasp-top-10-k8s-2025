@@ -1,0 +1,88 @@
+# K03 — Secrets Management Failures (HARDENED)
+# Same checkout/payments-api, credentials handled correctly. This manifest
+# satisfies the k03 check — no sensitive env var carries a literal value.
+#   - the Stripe key lives in a Secret, not in an env value or a ConfigMap
+#   - the Secret is mounted as read-only files (preferred over env injection,
+#     which leaks into `kubectl exec ... env`, child processes and crash dumps)
+#   - non-secret settings stay in the ConfigMap
+#
+# Beyond this manifest, in production you should ALSO:
+#   - enable encryption-at-rest for Secrets in etcd (EncryptionConfiguration,
+#     backed by a KMS/HSM such as AWS KMS on EKS), so etcd is not plaintext
+#   - source secrets from an external manager (AWS Secrets Manager, HashiCorp
+#     Vault, External Secrets Operator, Secrets Store CSI driver) instead of
+#     committing them to Git, and rotate them regularly
+#   - restrict RBAC so only the workloads that need a Secret can `get` it
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkout
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: payments-config
+  namespace: checkout
+  labels:
+    owasp: k03
+data:
+  # Only non-sensitive configuration belongs in a ConfigMap.
+  LOG_LEVEL: "info"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payments-credentials
+  namespace: checkout
+  labels:
+    owasp: k03
+type: Opaque
+stringData:
+  # In real life this is populated by an external secret manager, never
+  # committed to source control in plaintext like this lab example.
+  STRIPE_SECRET_KEY: "FLAG{hardcoded_stripe_key_sk_live_nimbus}"
+  BILLING_WEBHOOK_TOKEN: "whsec_9f8e7d6c5b4a3210nimbus"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-api
+  namespace: checkout
+  labels:
+    app: payments-api
+    owasp: k03
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments-api
+  template:
+    metadata:
+      labels:
+        app: payments-api
+        owasp: k03
+    spec:
+      containers:
+        - name: payments-api
+          image: busybox:1.36
+          command: ["sh", "-c", "sleep infinity"]
+          env:
+            # Non-secret config only. No credential ever appears as a literal.
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: payments-config
+                  key: LOG_LEVEL
+          volumeMounts:
+            # Credentials are mounted as read-only files under /etc/secrets,
+            # e.g. /etc/secrets/STRIPE_SECRET_KEY. Preferred over env injection.
+            - name: credentials
+              mountPath: /etc/secrets
+              readOnly: true
+      volumes:
+        - name: credentials
+          secret:
+            secretName: payments-credentials
+            defaultMode: 0400

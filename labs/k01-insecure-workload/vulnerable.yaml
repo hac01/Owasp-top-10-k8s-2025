@@ -1,0 +1,45 @@
+# K01 — Insecure Workload Configuration (VULNERABLE)
+# NimbusMart's data/inventory-sync job. Someone made it privileged with the
+# node's root filesystem mounted at /host "to write cache files fast". It is a
+# textbook container-breakout primitive:
+#   - runs as root (runAsUser: 0)
+#   - privileged: true  -> all host devices/capabilities
+#   - allowPrivilegeEscalation: true
+#   - mounts the node's entire root filesystem at /host
+#
+# Capture the flag:
+#   kubectl exec -it -n data inventory-sync -- cat /host/opt/nimbusmart/flag.txt
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inventory-sync
+  namespace: data
+  labels:
+    app: inventory-sync
+    owasp: k01
+spec:
+  containers:
+    - name: sync
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep infinity"]
+      securityContext:
+        privileged: true
+        runAsUser: 0
+        allowPrivilegeEscalation: true
+      volumeMounts:
+        - name: host-root
+          mountPath: /host
+  volumes:
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory

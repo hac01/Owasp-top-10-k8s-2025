@@ -1,0 +1,71 @@
+# K02 — Overly Permissive RBAC Configuration (VULNERABLE)
+# NimbusMart's storefront/catalog-api ServiceAccount was given god-mode across
+# the WHOLE cluster:
+#   - a ClusterRole with verbs ["*"], resources ["*"], apiGroups ["*"]
+#   - a ClusterRoleBinding granting it to the catalog-api ServiceAccount
+#   - a catalog-api pod that mounts that ServiceAccount token
+# Because the grant is cluster-wide, whoever compromises the pod can read every
+# Secret in EVERY namespace — including the master-vault in `nimbusmart-ops`.
+#
+# Capture the flag:
+#   kubectl exec -n storefront catalog-api -- \
+#     kubectl get secret master-vault -n nimbusmart-ops -o jsonpath='{.data.flag}' | base64 -d
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    owasp: k02
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: catalog-api-cluster
+  labels:
+    owasp: k02
+rules:
+  # Wildcard everything, cluster-wide — the textbook over-permissive rule.
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: catalog-api-cluster
+  labels:
+    owasp: k02
+subjects:
+  - kind: ServiceAccount
+    name: catalog-api
+    namespace: storefront
+roleRef:
+  kind: ClusterRole
+  name: catalog-api-cluster
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: catalog-api
+  namespace: storefront
+  labels:
+    app: catalog-api
+    owasp: k02
+spec:
+  serviceAccountName: catalog-api
+  containers:
+    - name: api
+      # bitnami/kubectl ships a kubectl that uses the mounted SA token.
+      image: alpine/k8s:1.31.1
+      command: ["sh", "-c", "sleep infinity"]

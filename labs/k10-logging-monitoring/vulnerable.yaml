@@ -1,0 +1,61 @@
+# K10 — Inadequate Logging and Monitoring (VULNERABLE)
+# NimbusMart's checkout/payments-api service. The cluster has NO observability
+# around it:
+#   - no API server audit policy         -> secret GETs are never recorded
+#   - no log-aggregation agent DaemonSet  -> container/node logs are never shipped
+#   - no runtime monitor (Falco)          -> exec into a pod is never noticed
+#
+# The payments-webhook Secret holds the signing key an attacker wants. Because
+# nothing is watching, it can be exfiltrated silently — no exec, no secret read,
+# and no lateral move leaves any collected trace.
+#
+# Capture the flag (either path leaves no record):
+#   kubectl get secret payments-webhook -n checkout -o jsonpath='{.data.flag}' | base64 -d
+#   # or exec in and read the mounted copy:
+#   kubectl exec -n checkout payments-api -- cat /etc/payments-webhook/flag
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: checkout
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k10
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: payments-webhook
+  namespace: checkout
+  labels:
+    app: payments-api
+    owasp: k10
+type: Opaque
+stringData:
+  # The webhook signing key the payments-api uses to verify Stripe callbacks.
+  # In this lab the sensitive value is the CTF flag.
+  flag: "FLAG{silent_exfil_left_no_audit_trail}"
+  WEBHOOK_URL: "https://hooks.nimbusmart.internal/payments"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: payments-api
+  namespace: checkout
+  labels:
+    app: payments-api
+    owasp: k10
+spec:
+  containers:
+    - name: payments-api
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep infinity"]
+      volumeMounts:
+        - name: webhook-secret
+          mountPath: /etc/payments-webhook
+          readOnly: true
+  volumes:
+    - name: webhook-secret
+      secret:
+        secretName: payments-webhook

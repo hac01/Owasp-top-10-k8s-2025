@@ -1,0 +1,56 @@
+# K04 — Lack of Cluster-Level Policy Enforcement (VULNERABLE)
+# NimbusMart's `platform` namespace was created ad hoc with NO Pod Security
+# Admission labels, so the built-in admission controller enforces nothing.
+# An attacker who can create pods here drops a rogue `debug-shell` that is
+# wildly non-compliant — privileged, root, hostPID, and host-root mounted —
+# and the API server admits it without a single objection.
+#
+# The flag is only revealed because the pod is actually ADMITTED and runs:
+#   kubectl logs -n platform debug-shell
+#   # or: kubectl exec -n platform debug-shell -- cat /root/flag.txt
+#
+# DO NOT deploy anything like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k04
+    # NOTE: no pod-security.kubernetes.io/enforce label -> nothing is enforced.
+    # Any pod, no matter how dangerous, is admitted into this namespace.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-shell
+  namespace: platform
+  labels:
+    app: debug-shell
+    owasp: k04
+spec:
+  hostPID: true
+  containers:
+    - name: shell
+      image: busybox:1.36
+      # Because admission control does nothing, this rogue pod runs and prints
+      # the flag that proves an insecure workload was admitted unchecked.
+      command:
+        - sh
+        - -c
+        - |
+          echo 'FLAG{no_admission_control_admits_anything}' | tee /root/flag.txt
+          echo "debug-shell admitted into platform with no policy to stop it"
+          sleep infinity
+      securityContext:
+        privileged: true
+        runAsUser: 0
+        allowPrivilegeEscalation: true
+      volumeMounts:
+        - name: host-root
+          mountPath: /host
+  volumes:
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory

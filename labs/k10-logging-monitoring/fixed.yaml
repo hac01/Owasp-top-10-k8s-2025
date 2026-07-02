@@ -1,0 +1,97 @@
+# K10 — Inadequate Logging and Monitoring (HARDENED)
+#
+# IMPORTANT: logging is a DETECTIVE control, not a preventive one. This manifest
+# does NOT remove or rotate the checkout/payments-webhook Secret — the flag is
+# still readable afterwards. The point of the fix is that the SAME read now
+# leaves an audit trail: a logging agent is present and (with the audit policy
+# applied to the control plane) the secret GET and pod exec are recorded.
+# Remediation is proven by the k10 checker PASSING (a logging agent is detected),
+# not by the flag becoming unreadable.
+#
+# This restores the observability layers that make attacker actions visible:
+#   1. A log-collector DaemonSet in kube-system that tails the node's
+#      /var/log on EVERY node and ships the lines to stdout (which a real
+#      pipeline would forward to durable, centralised storage).
+#   2. An example API server audit-policy ConfigMap. On self-managed
+#      clusters this file is passed to the API server via
+#      --audit-policy-file; on EKS/GKE/AKS enable audit logging in the
+#      provider console. (It is included here as documentation because the
+#      control plane is not user-managed in most clusters.)
+#
+# The container image below is fluent/fluent-bit in production. To keep the
+# lab applyable on any cluster without pulling a large image, the container
+# named "fluent-bit" uses busybox to tail node logs — the shape (a DaemonSet
+# reading hostPath /var/log) is identical and the k10 checker recognises it.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: log-collector
+  namespace: kube-system
+  labels:
+    k8s-app: log-collector
+spec:
+  selector:
+    matchLabels:
+      k8s-app: log-collector
+  template:
+    metadata:
+      labels:
+        k8s-app: log-collector
+    spec:
+      # Tolerate control-plane nodes so logs are collected everywhere.
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fluent-bit
+          image: busybox:1.36
+          # A real deployment runs fluent-bit reading these files; here we
+          # tail them so you can see logs being collected node-wide.
+          command:
+            - sh
+            - -c
+            - |
+              echo "[log-collector] tailing node logs from /var/log ...";
+              tail -n +1 -F /var/log/*.log 2>/dev/null || tail -f /dev/null
+          resources:
+            requests:
+              cpu: "20m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "128Mi"
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+---
+# Example API server audit policy. Mount/pass this to the API server with
+# --audit-policy-file (self-managed) or enable audit logging via your
+# managed provider. It records full detail on Secret access and pod exec.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-policy
+  namespace: kube-system
+  labels:
+    owasp: k10
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+      # Full request+response body for Secret and ConfigMap access.
+      - level: RequestResponse
+        resources:
+          - group: ""
+            resources: ["secrets", "configmaps"]
+      # Record exec/attach into pods (interactive access).
+      - level: Request
+        resources:
+          - group: ""
+            resources: ["pods/exec", "pods/attach"]
+      # Metadata for everything else.
+      - level: Metadata

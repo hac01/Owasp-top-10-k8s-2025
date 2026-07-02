@@ -1,0 +1,65 @@
+# BONUS — Supply Chain Vulnerabilities (VULNERABLE)
+# NimbusMart's storefront/recommendations service. The team ships it from a
+# mutable, unverified image reference:
+#   - image: busybox:latest        -> a moving target; ":latest" can be replaced
+#                                      upstream at any time with a poisoned build
+#   - no @sha256 digest             -> no guarantee of what content actually runs
+#   - imagePullPolicy: Always       -> every new pod re-pulls whatever ":latest"
+#                                      currently points to, so poisoned content
+#                                      lands immediately and cluster-wide
+#
+# An attacker who controls the upstream tag (compromised registry account or
+# mirror) pushed a poisoned build to ":latest". We SIMULATE that payload here:
+# the container's startup command drops an attacker backdoor file and logs a
+# beacon. In the real incident this was malware baked into the image layers —
+# nothing in the manifest changed, so no review or alert ever fired.
+#
+# Capture the flag (the poisoned payload that shipped inside the image):
+#   kubectl exec -n storefront deploy/recommendations -- cat /tmp/.backdoor
+#
+# DO NOT ship images by mutable tag like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendations
+  namespace: storefront
+  labels:
+    app: recommendations
+    owasp: kbonus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommendations
+  template:
+    metadata:
+      labels:
+        app: recommendations
+        owasp: kbonus
+    spec:
+      containers:
+        - name: recommendations
+          # Mutable, unverified reference. Whoever controls ":latest" upstream
+          # controls what runs here — that is exactly what happened.
+          image: busybox:latest
+          imagePullPolicy: Always
+          # SIMULATED POISONED PAYLOAD: attacker code that shipped inside the
+          # untrusted ":latest" image. It drops a backdoor file (the flag) and
+          # beacons to the logs, then behaves like a normal service.
+          command:
+            - sh
+            - -c
+            - |
+              echo 'FLAG{poisoned_latest_tag_shipped_to_prod}' > /tmp/.backdoor
+              chmod 600 /tmp/.backdoor
+              echo '[recommendations] poisoned :latest build active — backdoor installed'
+              exec sleep infinity
+          ports:
+            - containerPort: 8080

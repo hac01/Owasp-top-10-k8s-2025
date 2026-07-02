@@ -1,0 +1,7 @@
+# Keep the terminal image build context (repo root) small.
+web/node_modules
+web/.next
+web/out
+checker/owasp-k8s-checker
+.git
+**/node_modules

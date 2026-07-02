@@ -1,0 +1,24 @@
+# K02 setup — seeds the CTF flag into the OPS VAULT namespace.
+# The flag lives in a Secret (master-vault) in the `nimbusmart-ops` namespace —
+# a namespace the storefront workload has NO business reading. It is reachable
+# ONLY by abusing the wildcard, cluster-wide RBAC granted to the catalog-api
+# ServiceAccount in vulnerable.yaml. In the real world this secret would be a
+# root cloud credential or a database master password — here it's the flag.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nimbusmart-ops
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: master-vault
+  namespace: nimbusmart-ops
+  labels:
+    owasp: k02
+    app.kubernetes.io/part-of: nimbusmart
+type: Opaque
+stringData:
+  flag: "FLAG{wildcard_rbac_opens_the_ops_vault}"

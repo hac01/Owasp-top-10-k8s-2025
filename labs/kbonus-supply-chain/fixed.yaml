@@ -1,0 +1,62 @@
+# BONUS — Supply Chain Vulnerabilities (HARDENED)
+# The same storefront/recommendations service, trustworthy supply chain. This
+# Deployment satisfies the kbonus check and the poisoned payload is gone:
+#   - image pinned to an explicit version AND an immutable @sha256 digest, so
+#     the exact bytes that were reviewed, scanned, and signed are the bytes
+#     that run — an attacker can no longer swap ":latest" out from under us
+#   - imagePullPolicy: Always      -> the digest is re-verified on every pull
+#   - a CLEAN startup command that does NOT drop a backdoor or emit the flag;
+#     the poisoned code that rode inside the mutable tag is no longer present
+#   - provenance / SBOM / signature metadata recorded as annotations so the
+#     origin, scan status, and signing status of the artifact are auditable
+#
+# The digest below is the real multi-arch index digest for busybox:1.36.
+# Resolve your own before applying, e.g.:
+#   crane digest busybox:1.36
+#   docker buildx imagetools inspect busybox:1.36 --format '{{.Manifest.Digest}}'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recommendations
+  namespace: storefront
+  labels:
+    app: recommendations
+    owasp: kbonus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recommendations
+  template:
+    metadata:
+      labels:
+        app: recommendations
+        owasp: kbonus
+      annotations:
+        # Provenance / supply-chain metadata. These live in ANNOTATIONS, not
+        # labels, because label VALUES may not contain '/' or ':'.
+        image.provenance/source: "docker.io/library/busybox"
+        image.provenance/version: "1.36"
+        image.provenance/sbom-scanned: "true"
+        image.provenance/signature-verified: "true"
+        # How this artifact was produced and verified in CI.
+        supplychain.owasp.io/sbom: "syft packages -> uploaded to artifact store"
+        supplychain.owasp.io/scan: "trivy image --exit-code 1 --severity HIGH,CRITICAL"
+        supplychain.owasp.io/signature: "cosign verify --certificate-identity ..."
+    spec:
+      containers:
+        - name: recommendations
+          # Pinned by explicit version tag AND immutable content digest.
+          image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          imagePullPolicy: Always
+          # CLEAN command from the reviewed, signed build. No backdoor, no flag.
+          command: ["sh", "-c", "echo '[recommendations] verified build serving traffic'; exec sleep infinity"]
+          ports:
+            - containerPort: 8080

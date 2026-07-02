@@ -1,0 +1,138 @@
+# K05 — Missing Network Segmentation Controls (HARDENED)
+# Same pods as vulnerable.yaml, now segmented with NetworkPolicies. The model
+# flips from "allow all" to "deny by default, allow only what's needed":
+#
+#   data namespace:
+#     1. default-deny-ingress  — empty podSelector {} + Ingress in policyTypes
+#        drops ALL inbound traffic to every pod in `data`.
+#     2. allow-orders-db-from-clients — a targeted allow that lets ONLY pods
+#        labelled app=orders-client reach orders-db on 5678.
+#   storefront namespace:
+#     3. default-deny-ingress  — baseline for the frontend tier too.
+#
+# `web-frontend` is NOT labelled app=orders-client, so its cross-namespace call
+# to orders-db is no longer permitted by policy. This manifest also satisfies
+# the k05 automated check (a default-deny-ingress baseline exists in every
+# non-system namespace that runs pods).
+#
+# NOTE — CNI enforcement: NetworkPolicy objects are enforced by the CNI plugin,
+# NOT by the API server. On a stock `kind` cluster (kindnet) these objects are
+# CREATED but NOT ENFORCED, so the curl may still succeed after applying this
+# file. To see traffic actually drop, run a policy-capable CNI such as Calico:
+#   kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+# The remediation signal the k05 checker validates is that the NetworkPolicy
+# objects EXIST — which is the real fix regardless of the local CNI.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k05
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k05
+---
+# 1. Baseline: deny all ingress to every pod in the data namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: data
+  labels:
+    owasp: k05
+spec:
+  podSelector: {}          # selects every pod in the namespace
+  policyTypes:
+    - Ingress              # with no ingress rules, all inbound traffic is denied
+---
+# 2. Targeted allow: only app=orders-client pods may reach orders-db on 5678.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orders-db-from-clients
+  namespace: data
+  labels:
+    owasp: k05
+spec:
+  podSelector:
+    matchLabels:
+      app: orders-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: orders-client
+      ports:
+        - protocol: TCP
+          port: 5678
+---
+# 3. Baseline for the storefront tier too — nothing may reach the frontend
+#    unless explicitly allowed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: storefront
+  labels:
+    owasp: k05
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: orders-db
+  namespace: data
+  labels:
+    app: orders-db
+    owasp: k05
+spec:
+  containers:
+    - name: db
+      image: hashicorp/http-echo:1.0
+      args:
+        - "-listen=:5678"
+        - "-text=FLAG{flat_network_reached_the_orders_db}"
+      ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-db
+  namespace: data
+  labels:
+    app: orders-db
+    owasp: k05
+spec:
+  selector:
+    app: orders-db
+  ports:
+    - port: 5678
+      targetPort: 5678
+---
+# web-frontend is intentionally NOT labelled app=orders-client, so it stays
+# blocked under the deny-by-default policy set.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-frontend
+  namespace: storefront
+  labels:
+    app: web-frontend
+    owasp: k05
+spec:
+  containers:
+    - name: app
+      image: curlimages/curl:8.8.0
+      command: ["sh", "-c", "sleep infinity"]

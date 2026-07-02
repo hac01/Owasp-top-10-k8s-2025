@@ -1,0 +1,26 @@
+# The terminal pod needs to drive the whole cluster (deploy labs, exploit them,
+# run the checker). On a disposable local lab cluster that means cluster-admin.
+#
+# ⚠️  This is deliberately powerful: anyone who can reach the terminal WebSocket
+#     effectively has cluster-admin. It is safe ONLY because the platform is
+#     meant to run on a local, throwaway kind cluster reached over localhost.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctf-operator
+  namespace: nimbusmart-ctf
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ctf-operator-admin
+  labels:
+    app.kubernetes.io/part-of: nimbusmart-ctf-platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: ctf-operator
+    namespace: nimbusmart-ctf

@@ -1,0 +1,191 @@
+# K08 setup — stands up a realistic "cloud" next to the cluster:
+#   1. LocalStack        — a fake AWS account (S3, STS, Secrets Manager) that the
+#                          real `aws` CLI talks to.
+#   2. imds              — an emulator of the AWS Instance Metadata Service
+#                          (169.254.169.254). It hands out the NODE's IAM role
+#                          credentials, exactly like a real EC2/EKS node.
+#   3. a seed hook       — drops the "crown-jewel" data (the flag) into an S3
+#                          bucket and Secrets Manager inside the fake account.
+#
+# The attack: a pod reaches imds -> lifts the node's temporary cloud credentials
+# -> uses the real `aws` CLI against the fake account -> exfiltrates the flag.
+# That is cluster-to-cloud lateral movement, end to end.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+# ─────────────────────────── Fake AWS (LocalStack) ───────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: localstack-seed
+  namespace: platform
+data:
+  # LocalStack runs every script in /etc/localstack/init/ready.d once it's up.
+  seed.sh: |
+    #!/bin/bash
+    set -e
+    echo "[seed] provisioning the NimbusMart cloud account…"
+    awslocal s3 mb s3://nimbusmart-prod-backups
+    printf '%s' 'FLAG{pod_stole_node_cloud_credentials}' \
+      | awslocal s3 cp - s3://nimbusmart-prod-backups/db-backup/credentials.txt
+    awslocal secretsmanager create-secret \
+      --name nimbusmart/prod/db-master \
+      --secret-string 'FLAG{pod_stole_node_cloud_credentials}' || true
+    echo "[seed] done — flag is in s3://nimbusmart-prod-backups and Secrets Manager"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: platform
+  labels:
+    app: localstack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: localstack
+  template:
+    metadata:
+      labels:
+        app: localstack
+    spec:
+      containers:
+        - name: localstack
+          image: ctf-localstack:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4566
+          env:
+            - name: SERVICES
+              value: "s3,sts,iam,secretsmanager"
+            - name: DEBUG
+              value: "0"
+          readinessProbe:
+            httpGet:
+              path: /_localstack/health
+              port: 4566
+            initialDelaySeconds: 8
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "384Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: seed
+              mountPath: /etc/localstack/init/ready.d
+      volumes:
+        - name: seed
+          configMap:
+            name: localstack-seed
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: platform
+  labels:
+    app: localstack
+spec:
+  selector:
+    app: localstack
+  ports:
+    - name: edge
+      port: 4566
+      targetPort: 4566
+---
+# ───────────────────── Fake AWS IMDS (169.254.169.254) ──────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: imds-nginx
+  namespace: platform
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      server_name _;
+
+      # IMDSv2: the SDK PUTs here first to get a session token.
+      location = /latest/api/token {
+        default_type text/plain;
+        return 200 "AQAEANimbusMartFakeImdsV2SessionToken==";
+      }
+
+      # The instance's IAM role name.
+      location = /latest/meta-data/iam/security-credentials/ {
+        default_type text/plain;
+        return 200 "nimbusmart-node-role";
+      }
+
+      # The node's temporary credentials. LocalStack accepts any keys, so these
+      # "stolen" creds are all an attacker needs to act as the node in the cloud.
+      location = /latest/meta-data/iam/security-credentials/nimbusmart-node-role {
+        default_type application/json;
+        return 200 '{"Code":"Success","LastUpdated":"2026-01-01T00:00:00Z","Type":"AWS-HMAC","AccessKeyId":"ASIANIMBUSSTOLEN0KEY","SecretAccessKey":"nimbusMartN0de/R0leSecretKeyEXAMPLE","Token":"IQoJb3JpZ2luX2VjEND...NimbusMartFakeSessionToken","Expiration":"2035-01-01T00:00:00Z"}';
+      }
+
+      location / { return 404; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: imds
+  namespace: platform
+  labels:
+    app: imds
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: imds
+  template:
+    metadata:
+      labels:
+        app: imds
+    spec:
+      containers:
+        - name: imds
+          image: ctf-imds-nginx:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+          readinessProbe:
+            httpGet:
+              path: /latest/meta-data/iam/security-credentials/
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+      volumes:
+        - name: conf
+          configMap:
+            name: imds-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imds
+  namespace: platform
+  labels:
+    app: imds
+spec:
+  selector:
+    app: imds
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080

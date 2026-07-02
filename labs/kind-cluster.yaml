@@ -1,0 +1,23 @@
+# Shared local cluster for all OWASP K8s Top 10 labs.
+#   kind create cluster --config labs/kind-cluster.yaml
+#   kubectl config use-context kind-owasp-labs
+#
+# Deliberately does NOT enable Pod Security Admission at the cluster level so the
+# "vulnerable" manifests can be deployed. The defense steps show how to add it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: owasp-labs
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # 30080 is left free for the K06 lab (an intentionally-exposed NodePort).
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      # 30090 = CTF web app, 30091 = in-browser terminal WebSocket.
+      - containerPort: 30090
+        hostPort: 30090
+        protocol: TCP
+      - containerPort: 30091
+        hostPort: 30091
+        protocol: TCP

@@ -1,0 +1,64 @@
+# K04 — Lack of Cluster-Level Policy Enforcement (HARDENED)
+# The SAME `platform` namespace, now labeled for built-in Pod Security
+# Admission. The 'enforce: restricted' label rejects any pod that violates the
+# 'restricted' profile at admission time — centralized, cluster-native policy
+# with no extra install required.
+#   - enforce: restricted   -> the rogue debug-shell is REJECTED at admission
+#   - audit/warn: restricted -> violations are logged and surfaced to the user
+#
+# Re-applying vulnerable.yaml against this namespace now fails admission, so the
+# flag can never be printed. This file also ships a compliant replacement
+# workload (`platform-tools`) that IS admitted, proving legitimate pods run.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+    owasp: k04
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: platform-tools
+  namespace: platform
+  labels:
+    app: platform-tools
+    owasp: k04
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: tools
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep infinity"]
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "32Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"
+      volumeMounts:
+        - name: scratch
+          mountPath: /tmp
+  volumes:
+    - name: scratch
+      emptyDir: {}

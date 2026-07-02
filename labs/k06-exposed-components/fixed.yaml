@@ -1,0 +1,71 @@
+# K06 — Overly Exposed Kubernetes Components (HARDENED)
+# The same admin-portal dashboard, no longer published outside the cluster. The
+# Service is back to type: ClusterIP, so it is only reachable from inside the
+# cluster and localhost:30080 on the host now fails. This satisfies the k06
+# automated check (no NodePort / LoadBalancer in a non-system namespace).
+#
+# Removing the NodePort closes the accidental exposure, but "not externally
+# published" is only the first layer. A real internal dashboard should also:
+#   - require authentication (the app itself, or an authenticating proxy),
+#   - sit behind an ingress/gateway that enforces authn + TLS,
+#   - be constrained by a NetworkPolicy so only the pods that need it can reach
+#     it (default-deny ingress, then allow the specific callers).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: admin-portal
+  namespace: platform
+  labels:
+    app: admin-portal
+    owasp: k06
+spec:
+  containers:
+    - name: dashboard
+      image: hashicorp/http-echo:1.0.0
+      args:
+        - "-text=FLAG{nodeport_exposed_the_kube_dashboard}"
+        - "-listen=:5678"
+      ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-portal
+  namespace: platform
+  labels:
+    app: admin-portal
+    owasp: k06
+spec:
+  # ClusterIP keeps the dashboard internal to the cluster — no node port, no
+  # external publication. curl localhost:30080 no longer reaches it.
+  type: ClusterIP
+  selector:
+    app: admin-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5678
+---
+# Defence in depth: default-deny ingress to the dashboard so that, even inside
+# the cluster, only explicitly-allowed callers can reach it. Pair this with
+# authentication in the app or an authenticating ingress/gateway.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: admin-portal-default-deny
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app: admin-portal
+  policyTypes:
+    - Ingress
+  ingress: []

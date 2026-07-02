@@ -1,0 +1,9 @@
+# The CTF platform runs in its OWN namespace, separate from the lab namespaces
+# (data, storefront, checkout, platform, nimbusmart-ops) so it never collides
+# with the challenges it deploys.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nimbusmart-ctf
+  labels:
+    app.kubernetes.io/part-of: nimbusmart-ctf-platform

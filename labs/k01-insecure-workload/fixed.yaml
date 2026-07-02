@@ -1,0 +1,56 @@
+# K01 — Insecure Workload Configuration (HARDENED)
+# The same inventory-sync job, least-privilege. This pod satisfies the
+# "restricted" Pod Security Standard and the k01 automated check, and it can no
+# longer reach the node flag:
+#   - runs as a non-root UID
+#   - privileged: false, allowPrivilegeEscalation: false
+#   - drops ALL Linux capabilities
+#   - read-only root filesystem, writable scratch via emptyDir
+#   - no hostPath, no host namespaces
+#   - resource requests/limits set
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: inventory-sync
+  namespace: data
+  labels:
+    app: inventory-sync
+    owasp: k01
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sync
+      image: busybox:1.36
+      command: ["sh", "-c", "sleep infinity"]
+      securityContext:
+        privileged: false
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "32Mi"
+        limits:
+          cpu: "200m"
+          memory: "128Mi"
+      volumeMounts:
+        - name: scratch
+          mountPath: /tmp
+  volumes:
+    - name: scratch
+      emptyDir: {}

@@ -1,0 +1,50 @@
+# K01 setup — seeds the CTF flag onto the NODE filesystem.
+# This simulates sensitive operational data that lives on the host, outside any
+# container. It is reachable ONLY by breaking out of a pod to the node, which is
+# exactly what the vulnerable inventory-sync pod lets an attacker do.
+#
+# A one-shot privileged Job writes the flag to /opt/nimbusmart/flag.txt on the
+# node, then exits. (In the real world this file would be a kubeconfig, a cloud
+# credential, or a backup — here it's the flag.)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: node-seed
+  namespace: data
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        job: node-seed
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: busybox:1.36
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /host/opt/nimbusmart
+              echo 'FLAG{nimbusmart_hostpath_broke_out_to_the_node}' > /host/opt/nimbusmart/flag.txt
+              chmod 600 /host/opt/nimbusmart/flag.txt
+              echo "seeded node flag"
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory

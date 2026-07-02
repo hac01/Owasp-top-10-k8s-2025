@@ -1,0 +1,59 @@
+# K06 — Overly Exposed Kubernetes Components (VULNERABLE)
+# NimbusMart's internal ops dashboard, platform/admin-portal, was only ever
+# meant to be reachable from inside the cluster. Someone "just needed to see it
+# from their laptop" and switched the Service to type: NodePort on nodePort
+# 30080. On this kind cluster that node port is mapped straight to the host, so
+# the internal dashboard is now published to the outside world with no auth:
+#
+#   - Service type: NodePort  -> reachable on every node's IP at :30080
+#   - kind maps containerPort 30080 -> hostPort 30080 (see labs/kind-cluster.yaml)
+#   - no authentication, no NetworkPolicy, no ingress auth in front of it
+#
+# Capture the flag from the HOST (outside the cluster):
+#   curl -s http://localhost:30080
+#
+# DO NOT publish internal components like this outside a throwaway lab cluster.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    app.kubernetes.io/part-of: nimbusmart
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: admin-portal
+  namespace: platform
+  labels:
+    app: admin-portal
+    owasp: k06
+spec:
+  containers:
+    - name: dashboard
+      image: hashicorp/http-echo:1.0.0
+      args:
+        - "-text=FLAG{nodeport_exposed_the_kube_dashboard}"
+        - "-listen=:5678"
+      ports:
+        - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-portal
+  namespace: platform
+  labels:
+    app: admin-portal
+    owasp: k06
+spec:
+  # NodePort publishes this internal component on every node at :30080, which
+  # kind forwards to localhost:30080 on the host — exposing it to the world.
+  type: NodePort
+  selector:
+    app: admin-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5678
+      nodePort: 30080
