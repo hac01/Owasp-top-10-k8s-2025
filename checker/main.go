@@ -15,8 +15,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/owasp-k8s-top10/checker/checks"
-	"github.com/owasp-k8s-top10/checker/internal/cluster"
+	"github.com/hac01/Owasp-top-10-k8s-2025/checker/checks"
+	"github.com/hac01/Owasp-top-10-k8s-2025/checker/internal/cluster"
 )
 
 var (

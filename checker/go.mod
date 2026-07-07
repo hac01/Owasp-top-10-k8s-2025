@@ -1,4 +1,4 @@
-module github.com/owasp-k8s-top10/checker
+module github.com/hac01/Owasp-top-10-k8s-2025/checker
 
 go 1.26
 
